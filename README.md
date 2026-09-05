@@ -1,5 +1,7 @@
 # LUmacOSveler
 
+<img width="733" height="486" alt="Screenshot 2026-09-05 at 22 00 32" src="https://github.com/user-attachments/assets/50f98872-e20c-4616-a99e-fa5622842038" />
+
 LUmacOSveler is a JUCE/CMake VST3 loudness normalisation plugin for macOS.
 Its interface is designed around a compact loudness-control workflow, with
 Target Level, source loudness reference, dynamic correction, true-peak control,
