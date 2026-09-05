@@ -7,6 +7,7 @@ class InfoDialogContent final : public juce::Component
 public:
     explicit InfoDialogContent(const juce::String& message)
     {
+        setSize(500, 490);
         textEditor.setMultiLine(true);
         textEditor.setReadOnly(true);
         textEditor.setScrollbarsShown(true);

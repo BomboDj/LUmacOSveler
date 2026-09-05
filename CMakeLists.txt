@@ -37,7 +37,7 @@ juce_add_plugin(LUmacOSveler
     COPY_PLUGIN_AFTER_BUILD TRUE
     PLUGIN_MANUFACTURER_CODE Lmac
     PLUGIN_CODE Lmvl
-    FORMATS VST3
+    FORMATS VST3 AU
     PRODUCT_NAME "LUmacOSveler"
 )
 

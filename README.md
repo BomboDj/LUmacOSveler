@@ -1,7 +1,5 @@
 # LUmacOSveler
 
-<img width="733" height="486" alt="image" src="https://github.com/user-attachments/assets/b64e983d-96f6-4dff-9dec-08ee13474a60" />
-
 LUmacOSveler is a JUCE/CMake VST3 loudness normalisation plugin for macOS.
 Its interface is designed around a compact loudness-control workflow, with
 Target Level, source loudness reference, dynamic correction, true-peak control,
@@ -109,6 +107,44 @@ The VST3 output is generated in:
 
 ```text
 build/LUmacOSveler_artefacts/Release/VST3/LUmacOSveler.vst3
+```
+
+## Build and Install VST3/AU on macOS
+
+The following commands build both plugin formats, install them in the current
+user's standard macOS plugin folders, remove quarantine attributes, and apply
+an ad-hoc code signature:
+
+```sh
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+
+cmake --build build \
+    --config Release \
+    -j"$(sysctl -n hw.ncpu)"
+
+VST3_SOURCE="build/LUmacOSveler_artefacts/Release/VST3/LUmacOSveler.vst3"
+AU_SOURCE="build/LUmacOSveler_artefacts/Release/AU/LUmacOSveler.component"
+
+VST3_DEST="$HOME/Library/Audio/Plug-Ins/VST3/LUmacOSveler.vst3"
+AU_DEST="$HOME/Library/Audio/Plug-Ins/Components/LUmacOSveler.component"
+
+rm -rf "$VST3_DEST" "$AU_DEST"
+
+mkdir -p \
+    "$HOME/Library/Audio/Plug-Ins/VST3" \
+    "$HOME/Library/Audio/Plug-Ins/Components"
+
+ditto "$VST3_SOURCE" "$VST3_DEST"
+ditto "$AU_SOURCE" "$AU_DEST"
+
+xattr -c "$VST3_DEST"
+xattr -c "$AU_DEST"
+
+codesign --force --deep --sign - "$VST3_DEST"
+codesign --force --deep --sign - "$AU_DEST"
+
+codesign --verify --deep --strict --verbose=2 "$VST3_DEST"
+codesign --verify --deep --strict --verbose=2 "$AU_DEST"
 ```
 
 ## Standards Note
