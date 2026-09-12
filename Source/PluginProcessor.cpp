@@ -1,6 +1,73 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 
+namespace
+{
+constexpr float truePeakFirCoefficients[12][4] =
+{
+    { 0.0017089843750f, -0.0291748046875f, -0.0189208984375f, -0.0083007812500f },
+    { 0.0109863281250f, 0.0292968750000f, 0.0330810546875f, 0.0148925781250f },
+    { -0.0196533203125f, -0.0517578125000f, -0.0582275390625f, -0.0266113281250f },
+    { 0.0332031250000f, 0.0891113281250f, 0.1015625000000f, 0.0476074218750f },
+    { -0.0594482421875f, -0.1665039062500f, -0.2003173828125f, -0.1022949218750f },
+    { 0.1373291015625f, 0.4650878906250f, 0.7797851562500f, 0.9721679687500f },
+    { 0.9721679687500f, 0.7797851562500f, 0.4650878906250f, 0.1373291015625f },
+    { -0.1022949218750f, -0.2003173828125f, -0.1665039062500f, -0.0594482421875f },
+    { 0.0476074218750f, 0.1015625000000f, 0.0891113281250f, 0.0332031250000f },
+    { -0.0266113281250f, -0.0582275390625f, -0.0517578125000f, -0.0196533203125f },
+    { 0.0148925781250f, 0.0330810546875f, 0.0292968750000f, 0.0109863281250f },
+    { -0.0083007812500f, -0.0189208984375f, -0.0291748046875f, 0.0017089843750f }
+};
+
+juce::dsp::IIR::Coefficients<float>::Ptr makeKWeightingStage1(double sampleRate)
+{
+    const auto k = std::tan(juce::MathConstants<double>::pi * 1681.974450955533 / sampleRate);
+    const auto q = 0.7071752369554196;
+    const auto vh = std::pow(10.0, 3.999843853973347 / 20.0);
+    const auto vb = std::pow(vh, 0.4996667741545416);
+    const auto denominator = 1.0 + k / q + k * k;
+    const auto b0 = (vh + vb * k / q + k * k) / denominator;
+    const auto b1 = 2.0 * (k * k - vh) / denominator;
+    const auto b2 = (vh - vb * k / q + k * k) / denominator;
+    const auto a1 = 2.0 * (k * k - 1.0) / denominator;
+    const auto a2 = (1.0 - k / q + k * k) / denominator;
+    return new juce::dsp::IIR::Coefficients<float>(static_cast<float>(b0), static_cast<float>(b1),
+        static_cast<float>(b2), 1.0f, static_cast<float>(a1), static_cast<float>(a2));
+}
+
+juce::dsp::IIR::Coefficients<float>::Ptr makeKWeightingStage2(double sampleRate)
+{
+    const auto k = std::tan(juce::MathConstants<double>::pi * 38.13547087602444 / sampleRate);
+    const auto q = 0.5003270373253953;
+    const auto denominator = 1.0 + k / q + k * k;
+    const auto b0 = 1.0 / denominator;
+    const auto a1 = 2.0 * (k * k - 1.0) / denominator;
+    const auto a2 = (1.0 - k / q + k * k) / denominator;
+    return new juce::dsp::IIR::Coefficients<float>(static_cast<float>(b0),
+        static_cast<float>(-2.0 * b0), static_cast<float>(b0), 1.0f,
+        static_cast<float>(a1), static_cast<float>(a2));
+}
+}
+
+float LUmacOSvelerAudioProcessor::processTruePeakSample(int channel, float sample) noexcept
+{
+    truePeakHistory[static_cast<size_t>(channel)][truePeakHistoryPosition] = sample;
+    auto peak = 0.0f;
+    for (int phase = 0; phase < 4; ++phase)
+    {
+        auto interpolated = 0.0f;
+        for (int tap = 0; tap < truePeakFirTaps; ++tap)
+        {
+            const auto index = (truePeakHistoryPosition + truePeakFirTaps
+                - static_cast<size_t>(tap)) % truePeakFirTaps;
+            interpolated += truePeakFirCoefficients[tap][phase]
+                * truePeakHistory[static_cast<size_t>(channel)][index];
+        }
+        peak = juce::jmax(peak, std::abs(interpolated));
+    }
+    return peak;
+}
+
 LUmacOSvelerAudioProcessor::LUmacOSvelerAudioProcessor()
     : AudioProcessor(BusesProperties()
                          .withInput("Input", juce::AudioChannelSet::stereo(), true)
@@ -17,7 +84,7 @@ LUmacOSvelerAudioProcessor::createParameterLayout()
         targetLevelParameterId,
         "Target Level",
         juce::NormalisableRange<float>(-36.0f, -6.0f, 0.1f),
-        -20.0f,
+        -23.0f,
         juce::AudioParameterFloatAttributes()
             .withLabel("LUFS")
             .withStringFromValueFunction([](float value, int) { return juce::String(value, 1); })));
@@ -41,7 +108,7 @@ LUmacOSvelerAudioProcessor::createParameterLayout()
             .withStringFromValueFunction([](float value, int) { return juce::String(value, 1); })));
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         inputLevelParameterId, "Input Level", juce::NormalisableRange<float>(-60.0f, 0.0f, 0.1f),
-        -20.0f,
+        -23.0f,
         juce::AudioParameterFloatAttributes()
             .withLabel("LUFS")
             .withStringFromValueFunction([](float value, int) { return juce::String(value, 1); })));
@@ -60,6 +127,9 @@ LUmacOSvelerAudioProcessor::createParameterLayout()
     layout.add(std::make_unique<juce::AudioParameterChoice>(
         correctionMixModeParameterId, "Correction Mix Mode",
         juce::StringArray { "Linear / Linear", "Linear / Log", "Log / Linear", "Log / Log" }, 0));
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        lfeGainParameterId, "LFE Gain", juce::NormalisableRange<float>(-24.0f, 12.0f, 0.1f), 0.0f,
+        juce::AudioParameterFloatAttributes().withLabel("dB")));
     return layout;
 }
 
@@ -67,11 +137,11 @@ void LUmacOSvelerAudioProcessor::prepareToPlay(double newSampleRate, int samples
 {
     // The host may use any rate in this range, including non-standard rates.
     // Clamp invalid host values to keep all DSP state safely initialised.
-    sampleRate = juce::jlimit(minimumSampleRate, maximumSampleRate, newSampleRate);
+    sampleRate = newSampleRate > 0.0 ? newSampleRate : 44100.0;
     gainDb.reset(sampleRate, 1.0);
     gainDb.setCurrentAndTargetValue(0.0f);
     truePeakOversampler.reset();
-    truePeakOversampler.initProcessing(static_cast<size_t>(samplesPerBlock));
+    truePeakOversampler.initProcessing(static_cast<size_t>(juce::jmax(1, samplesPerBlock)));
     shortTermEnergy.assign(static_cast<size_t>(std::ceil(sampleRate * 3.0)), 0.0f);
     shortTermWritePosition = 0;
     shortTermSamples = 0;
@@ -82,27 +152,22 @@ void LUmacOSvelerAudioProcessor::prepareToPlay(double newSampleRate, int samples
     momentaryEnergySum = 0.0;
     gateHopSamples = juce::jmax(1, static_cast<int>(std::round(sampleRate * 0.1)));
     gateHopPosition = 0;
-    gatedBlockEnergies.assign(9000, 0.0f);
+    gatedBlockEnergies.assign(3600000, 0.0f);
     gatedBlockCount = 0;
 
-    for (auto channel = 0; channel < 2; ++channel)
+    for (auto channel = 0; channel < 6; ++channel)
     {
         highPassFilters[static_cast<size_t>(channel)].reset();
         highShelfFilters[static_cast<size_t>(channel)].reset();
-        highPassFilters[static_cast<size_t>(channel)].coefficients =
-            juce::dsp::IIR::Coefficients<float>::makeHighPass(sampleRate, 38.1358f, 0.5f);
-        highShelfFilters[static_cast<size_t>(channel)].coefficients =
-            juce::dsp::IIR::Coefficients<float>::makeHighShelf(sampleRate, 1681.974f, 0.7071f,
-            juce::Decibels::decibelsToGain(4.0f));
+        highPassFilters[static_cast<size_t>(channel)].coefficients = makeKWeightingStage2(sampleRate);
+        highShelfFilters[static_cast<size_t>(channel)].coefficients = makeKWeightingStage1(sampleRate);
     }
 
-    const auto oversamplingFactor = static_cast<double>(truePeakOversampler.getOversamplingFactor());
-    const auto lookAheadSamples = juce::jmax(1, static_cast<int>(
-        std::round(sampleRate * 0.0001 * oversamplingFactor)));
-    limiterDelay.assign(static_cast<size_t>(lookAheadSamples + 1), { 0.0f, 0.0f });
-    limiterWritePosition = 0;
-    limiterGainReductionDb = 0.0f;
-    gainReductionDb.store(0.0f);
+    truePeakHistoryPosition = 0;
+    for (auto& channelHistory : truePeakHistory)
+        channelHistory.fill(0.0f);
+
+    setLatencySamples(static_cast<int>(std::ceil(truePeakOversampler.getLatencyInSamples())));
     juce::ignoreUnused(samplesPerBlock);
 }
 
@@ -122,10 +187,6 @@ void LUmacOSvelerAudioProcessor::releaseResources()
     momentarySamples = 0;
     momentaryEnergySum = 0.0;
     gateHopPosition = 0;
-    limiterDelay.clear();
-    limiterWritePosition = 0;
-    limiterGainReductionDb = 0.0f;
-    gainReductionDb.store(0.0f);
 }
 
 bool LUmacOSvelerAudioProcessor::isBusesLayoutSupported(const BusesLayout& layouts) const
@@ -133,7 +194,8 @@ bool LUmacOSvelerAudioProcessor::isBusesLayoutSupported(const BusesLayout& layou
     const auto& mainInput = layouts.getChannelSet(true, 0);
     const auto& mainOutput = layouts.getChannelSet(false, 0);
     const auto isSupportedInput = mainInput == juce::AudioChannelSet::mono()
-                               || mainInput == juce::AudioChannelSet::stereo();
+                               || mainInput == juce::AudioChannelSet::stereo()
+                               || mainInput == juce::AudioChannelSet::create5point1();
     return isSupportedInput && mainInput == mainOutput;
 }
 
@@ -141,6 +203,18 @@ void LUmacOSvelerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
                                               juce::MidiBuffer&)
 {
     juce::ScopedNoDenormals noDenormals;
+
+    if (resetMeasurementRequest.exchange(false))
+    {
+        shortTermWritePosition = 0;
+        shortTermSamples = 0;
+        shortTermEnergySum = 0.0;
+        momentaryWritePosition = 0;
+        momentarySamples = 0;
+        momentaryEnergySum = 0.0;
+        gateHopPosition = 0;
+        gatedBlockCount = 0;
+    }
 
     bool finishInputLearning = false;
     switch (inputLearnRequest.exchange(0))
@@ -173,7 +247,13 @@ void LUmacOSvelerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
                 auto value = buffer.getReadPointer(channel)[sample];
                 value = highPassFilters[static_cast<size_t>(channel)].processSample(value);
                 value = highShelfFilters[static_cast<size_t>(channel)].processSample(value);
-                sampleEnergy += static_cast<double>(value) * value;
+                // JUCE 5.1 order is L, R, C, LFE, Ls, Rs. BS.1770 excludes LFE.
+                const auto isLfe = numChannels == 6 && channel == 3;
+                constexpr auto surroundWeight = 1.4125375; // +1.5 dB
+                const auto channelWeight = isLfe ? 0.0 :
+                    (numChannels == 6 && (channel == 4 || channel == 5)
+                         ? surroundWeight : 1.0);
+                sampleEnergy += channelWeight * static_cast<double>(value) * value;
             }
 
             const auto energy = static_cast<float>(sampleEnergy);
@@ -207,8 +287,10 @@ void LUmacOSvelerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
         }
 
         const auto meanSquare = shortTermEnergySum / static_cast<double>(shortTermSamples);
-        const auto shortTermLufs = -0.691f
-            + 10.0f * std::log10(static_cast<float>(juce::jmax(1.0e-12, meanSquare)));
+        const auto shortTermLufs = shortTermSamples == shortTermEnergy.size()
+            ? -0.691f + 10.0f * std::log10(static_cast<float>(
+                juce::jmax(1.0e-12, meanSquare)))
+            : -std::numeric_limits<float>::infinity();
 
         // The 3-second window matches the R128 short-term time constant. The
         // K-weighting and R128 gating stages will replace this RMS estimator.
@@ -259,6 +341,10 @@ void LUmacOSvelerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
                 inputLearning.store(false);
             }
         }
+        else if (finishInputLearning)
+        {
+            inputLearning.store(false);
+        }
 
         if (std::isfinite(shortTermLufs) && shortTermSamples >= minimumMeasurementSamples
             && shortTermLufs >= absoluteGate && (std::isinf(integratedLufs) || shortTermLufs >= integratedLufs + relativeGate))
@@ -293,77 +379,56 @@ void LUmacOSvelerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
         const auto gain = juce::Decibels::decibelsToGain(gainDb.getNextValue());
         for (auto channel = 0; channel < numChannels; ++channel)
             buffer.getWritePointer(channel)[sample] *= gain;
+        if (numChannels == 6)
+            buffer.getWritePointer(3)[sample] *= juce::Decibels::decibelsToGain(
+                parameters.getRawParameterValue(lfeGainParameterId)->load());
     }
 
-    auto limitingBlock = juce::dsp::AudioBlock<float>(buffer);
+    const auto internalCeiling = juce::Decibels::decibelsToGain(
+        parameters.getRawParameterValue(truePeakParameterId)->load() - 0.2f);
+    for (auto sample = 0; sample < numSamples; ++sample)
+    {
+        auto estimatedPeak = 0.0f;
+        for (auto channel = 0; channel < numChannels; ++channel)
+            estimatedPeak = juce::jmax(estimatedPeak,
+                processTruePeakSample(channel, buffer.getReadPointer(channel)[sample]));
+        truePeakHistoryPosition = (truePeakHistoryPosition + 1) % truePeakFirTaps;
+        const auto peakGain = estimatedPeak > internalCeiling
+            ? internalCeiling / estimatedPeak : 1.0f;
+        for (auto channel = 0; channel < numChannels; ++channel)
+            buffer.getWritePointer(channel)[sample] *= peakGain;
+    }
+
+    auto clippingBlock = juce::dsp::AudioBlock<float>(buffer);
     const auto isOversampled = truePeakOversampler.getOversamplingFactor() > 1;
     if (isOversampled)
-        limitingBlock = truePeakOversampler.processSamplesUp(limitingBlock);
+        clippingBlock = truePeakOversampler.processSamplesUp(clippingBlock);
 
-    // Fixed end-of-chain limiter: 0 dB output, 0.1 ms lookahead, 0.1 dB knee
-    // and 0.1 ms release. The detector is linked across channels. The true
-    // peak parameter moves the preceding threshold below the fixed 0 dB wall.
-    if (!limiterDelay.empty() && limitingBlock.getNumSamples() > 0)
+    const auto ceiling = juce::Decibels::decibelsToGain(
+        parameters.getRawParameterValue(truePeakParameterId)->load());
+
+    // Fixed hard clipper at the selected true-peak ceiling.
+    if (clippingBlock.getNumSamples() > 0)
     {
-        const auto delaySize = limiterDelay.size();
-        constexpr auto truePeakSafetyMarginDb = 0.2f;
-        const auto truePeakTargetDb = parameters.getRawParameterValue(truePeakParameterId)->load()
-            - truePeakSafetyMarginDb;
-        const auto limiterSampleRate = sampleRate * (isOversampled ? 4.0 : 1.0);
-        const auto releaseCoefficient = std::exp(static_cast<float>(
-            -1.0 / (0.0001 * limiterSampleRate)));
-        float blockReductionDb = 0.0f;
-
-        for (size_t sample = 0; sample < limitingBlock.getNumSamples(); ++sample)
+        for (size_t sample = 0; sample < clippingBlock.getNumSamples(); ++sample)
         {
-            const auto readPosition = (limiterWritePosition + 1) % delaySize;
-            auto peak = 0.0f;
             for (auto channel = 0; channel < numChannels; ++channel)
             {
-                auto* channelSamples = limitingBlock.getChannelPointer(static_cast<size_t>(channel));
-                limiterDelay[limiterWritePosition][static_cast<size_t>(channel)] = channelSamples[sample];
-                peak = juce::jmax(peak, std::abs(channelSamples[sample]));
+                auto* channelSamples = clippingBlock.getChannelPointer(static_cast<size_t>(channel));
+                channelSamples[sample] = juce::jlimit(-internalCeiling, internalCeiling,
+                    channelSamples[sample]);
             }
-
-            const auto peakDb = juce::Decibels::gainToDecibels(peak, -160.0f);
-            constexpr auto kneeWidthDb = 0.1f;
-            const auto halfKneeDb = kneeWidthDb * 0.5f;
-            const auto distanceFromTargetDb = peakDb - truePeakTargetDb;
-            float desiredReductionDb = 0.0f;
-
-            if (distanceFromTargetDb > halfKneeDb)
-                desiredReductionDb = distanceFromTargetDb;
-            else if (distanceFromTargetDb > -halfKneeDb)
-            {
-                const auto distanceIntoKnee = distanceFromTargetDb + halfKneeDb;
-                desiredReductionDb = (distanceIntoKnee * distanceIntoKnee)
-                    / (2.0f * kneeWidthDb);
-            }
-
-            if (desiredReductionDb > limiterGainReductionDb)
-                limiterGainReductionDb = desiredReductionDb;
-            else
-                limiterGainReductionDb *= releaseCoefficient;
-
-            blockReductionDb = juce::jmax(blockReductionDb, limiterGainReductionDb);
-            const auto limiterGain = juce::Decibels::decibelsToGain(-limiterGainReductionDb);
-            for (auto channel = 0; channel < numChannels; ++channel)
-            {
-                auto* channelSamples = limitingBlock.getChannelPointer(static_cast<size_t>(channel));
-                channelSamples[sample] = juce::jlimit(-1.0f, 1.0f,
-                    limiterDelay[readPosition][static_cast<size_t>(channel)] * limiterGain);
-            }
-
-            limiterWritePosition = (limiterWritePosition + 1) % delaySize;
         }
-
-        gainReductionDb.store(juce::jlimit(0.0f, 12.0f, blockReductionDb));
     }
 
     if (isOversampled)
     {
         auto outputBlock = juce::dsp::AudioBlock<float>(buffer);
         truePeakOversampler.processSamplesDown(outputBlock);
+        for (auto channel = 0; channel < numChannels; ++channel)
+            for (auto sample = 0; sample < buffer.getNumSamples(); ++sample)
+                buffer.getWritePointer(channel)[sample] = juce::jlimit(-ceiling, ceiling,
+                    buffer.getReadPointer(channel)[sample]);
     }
 
     for (auto channel = getTotalNumInputChannels(); channel < getTotalNumOutputChannels(); ++channel)
@@ -381,7 +446,7 @@ void LUmacOSvelerAudioProcessor::resetParametersToDefaults()
     {
         targetLevelParameterId, maxGainParameterId, truePeakParameterId, freezeLevelParameterId,
         inputLevelParameterId, correctionHighParameterId, correctionLowParameterId,
-        correctionMixModeParameterId
+        correctionMixModeParameterId, lfeGainParameterId
     };
 
     for (const auto* parameterId : parameterIds)

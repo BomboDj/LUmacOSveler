@@ -15,6 +15,8 @@ public:
     static constexpr auto correctionHighParameterId = "correctionHigh";
     static constexpr auto correctionLowParameterId = "correctionLow";
     static constexpr auto correctionMixModeParameterId = "correctionMixMode";
+    static constexpr auto lfeGainParameterId = "lfeGain";
+    static constexpr int truePeakFirTaps = 12;
 
     LUmacOSvelerAudioProcessor();
     ~LUmacOSvelerAudioProcessor() override = default;
@@ -43,8 +45,8 @@ public:
     void setStateInformation(const void*, int) override;
 
     float getTargetLevelLUFS() const noexcept;
-    const std::atomic<float>& getGainReductionDb() const noexcept { return gainReductionDb; }
     void resetParametersToDefaults();
+    void requestMeasurementReset() noexcept { resetMeasurementRequest.store(true); }
     void startInputLevelLearn() noexcept { inputLearnRequest.store(1); }
     void stopInputLevelLearn() noexcept { inputLearnRequest.store(2); }
     bool isInputLevelLearning() const noexcept { return inputLearning.load(); }
@@ -54,6 +56,8 @@ public:
         return rate >= minimumSampleRate && rate <= maximumSampleRate;
     }
 
+    float processTruePeakSample(int channel, float sample) noexcept;
+
     juce::AudioProcessorValueTreeState parameters;
 
 private:
@@ -62,9 +66,9 @@ private:
     double sampleRate = 44100.0;
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> gainDb;
     juce::dsp::Oversampling<float> truePeakOversampler {
-        2, 2, juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR, true };
-    std::array<juce::dsp::IIR::Filter<float>, 2> highPassFilters;
-    std::array<juce::dsp::IIR::Filter<float>, 2> highShelfFilters;
+        6, 2, juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR, true };
+    std::array<juce::dsp::IIR::Filter<float>, 6> highPassFilters;
+    std::array<juce::dsp::IIR::Filter<float>, 6> highShelfFilters;
     std::vector<float> shortTermEnergy;
     size_t shortTermWritePosition = 0;
     size_t shortTermSamples = 0;
@@ -77,12 +81,11 @@ private:
     int gateHopPosition = 0;
     std::vector<float> gatedBlockEnergies;
     size_t gatedBlockCount = 0;
-    std::vector<std::array<float, 2>> limiterDelay;
-    size_t limiterWritePosition = 0;
-    float limiterGainReductionDb = 0.0f;
-    std::atomic<float> gainReductionDb { 0.0f };
     std::atomic<int> inputLearnRequest { 0 };
     std::atomic<bool> inputLearning { false };
+    std::atomic<bool> resetMeasurementRequest { false };
+    std::array<std::array<float, truePeakFirTaps>, 6> truePeakHistory {};
+    size_t truePeakHistoryPosition = 0;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(LUmacOSvelerAudioProcessor)
 };

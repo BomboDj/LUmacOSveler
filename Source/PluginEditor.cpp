@@ -1,7 +1,16 @@
 #include "PluginEditor.h"
+#include <BinaryData.h>
 
 namespace
 {
+std::unique_ptr<juce::Drawable> createTitleGraphic()
+{
+    const auto image = juce::ImageCache::getFromMemory(
+        LUmacOSvelerIconData::LUmacOSvelerTitle_png,
+        LUmacOSvelerIconData::LUmacOSvelerTitle_pngSize);
+    return image.isValid() ? std::make_unique<juce::DrawableImage>(image) : nullptr;
+}
+
 class InfoDialogContent final : public juce::Component
 {
 public:
@@ -19,6 +28,7 @@ public:
         textEditor.setColour(juce::TextEditor::textColourId, juce::Colours::white.withAlpha(0.86f));
         textEditor.setColour(juce::TextEditor::outlineColourId, juce::Colours::transparentBlack);
         addAndMakeVisible(textEditor);
+        icon = createTitleGraphic();
 
         closeButton.setButtonText("CLOSE");
         closeButton.onClick = [this]
@@ -34,23 +44,36 @@ public:
         auto bounds = getLocalBounds().reduced(14);
         closeButton.setBounds(bounds.removeFromBottom(32).withSizeKeepingCentre(90, 28));
         bounds.removeFromBottom(10);
+        bounds.removeFromTop(42);
         textEditor.setBounds(bounds);
+    }
+
+    void paint(juce::Graphics& graphics) override
+    {
+        if (icon != nullptr)
+            icon->drawWithin(graphics, { 14.0f, 8.0f, 220.0f, 40.0f },
+                             juce::RectanglePlacement::centred, 1.0f);
+        graphics.setColour(juce::Colours::white.withAlpha(0.65f));
+        graphics.setFont(juce::FontOptions(13.0f));
+        graphics.drawText("Version 0.6.0", 14, 50, 220, 18,
+                          juce::Justification::centredLeft);
     }
 
 private:
     juce::TextEditor textEditor;
     juce::TextButton closeButton;
+    std::unique_ptr<juce::Drawable> icon;
 };
 }
 
 LUmacOSvelerAudioProcessorEditor::LUmacOSvelerAudioProcessorEditor(
     LUmacOSvelerAudioProcessor& processorToEdit)
     : AudioProcessorEditor(processorToEdit), audioProcessor(processorToEdit)
-      , limiterReductionMeter(processorToEdit.getGainReductionDb(), limiterReductionLabel)
 {
     setSize(750, 500);
     setResizable(true, true);
-    setResizeLimits(520, 500, 1000, 720);
+    setResizeLimits(620, 500, 1100, 670);
+
 
     targetLabel.setText("TARGET LEVEL", juce::dontSendNotification);
     targetLabel.setJustificationType(juce::Justification::centredLeft);
@@ -92,9 +115,15 @@ LUmacOSvelerAudioProcessorEditor::LUmacOSvelerAudioProcessorEditor(
         audioProcessor.parameters, LUmacOSvelerAudioProcessor::maxGainParameterId, maxGainSlider);
 
     configureSlider(truePeakLabel, truePeakSlider, "TRUE PEAK");
+    truePeakSlider.setLookAndFeel(&sliderLookAndFeel);
     truePeakSlider.setTextValueSuffix(" dBTP");
     truePeakAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         audioProcessor.parameters, LUmacOSvelerAudioProcessor::truePeakParameterId, truePeakSlider);
+
+    configureSlider(lfeGainLabel, lfeGainSlider, "LFE GAIN (5.1)");
+    lfeGainSlider.setTextValueSuffix(" dB");
+    lfeGainAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        audioProcessor.parameters, LUmacOSvelerAudioProcessor::lfeGainParameterId, lfeGainSlider);
 
     configureSlider(freezeLevelLabel, freezeLevelSlider, "FREEZE LEVEL");
     freezeLevelSlider.setTextValueSuffix(" LUFS");
@@ -135,7 +164,11 @@ LUmacOSvelerAudioProcessorEditor::LUmacOSvelerAudioProcessorEditor(
 
     resetButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff30353b));
     resetButton.setColour(juce::TextButton::textColourOffId, juce::Colours::white.withAlpha(0.8f));
-    resetButton.onClick = [this] { audioProcessor.resetParametersToDefaults(); };
+    resetButton.onClick = [this]
+    {
+        audioProcessor.resetParametersToDefaults();
+        audioProcessor.requestMeasurementReset();
+    };
     addAndMakeVisible(resetButton);
 
     inputLearnButton.setClickingTogglesState(true);
@@ -162,29 +195,40 @@ LUmacOSvelerAudioProcessorEditor::LUmacOSvelerAudioProcessorEditor(
     infoButton.onClick = []
     {
         const juce::String infoText =
-            "ITU-R BS.1770 / EBU R128\n\n"
-            "LOUDNESS ANALYSIS\n"
-            "K-weighting: high-pass 38.1358 Hz + high-shelf 1681.974 Hz / +4 dB\n"
-            "Momentary: 400 ms | Short-term: 3 s\n"
-            "Integrated blocks: 400 ms with 100 ms hop (75% overlap)\n"
-            "Absolute gate: -70 LUFS (fixed) | Relative gate: -10 LU (fixed)\n\n"
-            "GAIN CONTROL\n"
-            "Target Level: default -20 LUFS\n"
-            "Input Level: fixed integrated-loudness reference of the source\n"
-            "LEARN INPUT captures gated integrated loudness and applies it when stopped\n"
-            "Max Gain: total compensation limit from 0 to +30 dB\n"
-            "Example: -23 LUFS to -16 LUFS needs 7 dB; allowing 10 dB more\n"
-            "requires Max Gain = 17 dB\n"
-            "Freeze Level: gain increases only above the input loudness threshold\n"
-            "Correction High/Low: controlled gain ratio above/below Input Level\n"
-            "Mix Mode: 0 linear/linear, 1 linear/log, 2 log/linear, 3 log/log\n\n"
-            "TRUE PEAK\n"
-            "Adjustable maximum: default -1.0 dBTP, 4x oversampling\n"
-            "Internal safety margin: 0.2 dB\n\n"
-            "LIMITER\n"
-            "Fixed final limiter, always active\n"
-            "Threshold: 0 dB | Output: 0 dB\n"
-            "Lookahead: 0.1 ms | Knee: 0.1 dB | Release: 0.1 ms";
+            "Version 0.6.0\n"
+            "ITU-R BS.1770-5 measurement + EBU R 128 workflow\n\n"
+            "SUPPORTED CONFIGURATIONS\n"
+            "Mono, stereo and 5.1 channel layouts\n"
+            "Sample rates: 8 kHz - 192 kHz\n"
+            "LFE is excluded from loudness measurement in 5.1\n\n"
+            "LOUDNESS MEASUREMENT\n"
+            "K-weighting: ITU-R BS.1770-5 two-stage biquad filter\n"
+            "Momentary window: 400 ms\n"
+            "Short-term window: 3 seconds\n"
+            "Integrated blocks: 400 ms, 100 ms hop, 75% overlap\n"
+            "Absolute gate: -70 LUFS\n"
+            "Relative gate: -10 LU below the absolute-gated average\n"
+            "RESET restores all defaults and clears the programme loudness history\n\n"
+            "LEVEL PARAMETERS\n"
+            "Target Level [LUFS]: desired output loudness; EBU default -23 LUFS\n"
+            "Input Level [LUFS]: known or learned integrated loudness of the source\n"
+            "Max Gain [dB]: maximum total gain compensation, 0 to +30 dB\n"
+            "Freeze Level [LUFS]: prevents quiet background noise from being raised\n\n"
+            "DYNAMIC CORRECTION\n"
+            "Correction High [%]: correction above Input Level\n"
+            "Correction Low [%]: correction below Input Level\n"
+            "Mix Mode: Linear/Linear, Linear/Log, Log/Linear or Log/Log\n"
+            "LEARN INPUT measures the gated input loudness during playback\n"
+            "and writes the result to Input Level when stopped\n\n"
+            "TRUE PEAK / CLIPPER\n"
+            "True Peak [dBTP]: user-facing ceiling\n"
+            "Internal safety margin: 0.2 dB\n"
+            "ITU Annex 2 FIR true-peak estimation, 4x oversampling\n"
+            "Always-active hard clipper; no limiter, lookahead or release stage\n\n"
+            "5.1 ONLY\n"
+            "LFE Gain [dB]: fixed gain applied to the LFE channel\n"
+            "The LFE remains excluded from loudness measurement but is clipped\n"
+            "at the true-peak ceiling like the other output channels.";
 
         juce::DialogWindow::LaunchOptions options;
         options.content.setOwned(new InfoDialogContent(infoText));
@@ -198,62 +242,15 @@ LUmacOSvelerAudioProcessorEditor::LUmacOSvelerAudioProcessorEditor(
     };
     addAndMakeVisible(infoButton);
 
-    limiterLabel.setText("LIMITER", juce::dontSendNotification);
-    limiterLabel.setJustificationType(juce::Justification::centredLeft);
-    limiterLabel.setColour(juce::Label::textColourId, juce::Colours::white.withAlpha(0.7f));
-    addAndMakeVisible(limiterLabel);
-    limiterReductionLabel.setText("0.0 dB", juce::dontSendNotification);
-    limiterReductionLabel.setJustificationType(juce::Justification::centredRight);
-    limiterReductionLabel.setColour(juce::Label::textColourId, juce::Colours::white.withAlpha(0.8f));
-    addAndMakeVisible(limiterReductionLabel);
-    addAndMakeVisible(limiterReductionMeter);
-}
-
-void LUmacOSvelerAudioProcessorEditor::LimiterReductionMeter::timerCallback()
-{
-    const auto now = juce::Time::getMillisecondCounterHiRes();
-    const auto currentReduction = juce::jlimit(0.0f, 12.0f, reductionDb.load());
-
-    if (currentReduction >= heldReductionDb)
-    {
-        heldReductionDb = currentReduction;
-        lastPeakTimeMs = now;
-    }
-    else if (now - lastPeakTimeMs >= 1000.0)
-    {
-        heldReductionDb = currentReduction;
-        lastPeakTimeMs = now;
-    }
-
-    reductionValueLabel.setText(juce::String(juce::jlimit(0.0f, 12.0f, heldReductionDb), 1)
-                                + " dB", juce::dontSendNotification);
-    if (getParentComponent() != nullptr)
-        getParentComponent()->repaint();
-    repaint();
-}
-
-void LUmacOSvelerAudioProcessorEditor::LimiterReductionMeter::paint(juce::Graphics& graphics)
-{
-    const auto area = getLocalBounds().toFloat();
-    const auto liveReduction = juce::jlimit(0.0f, 12.0f, reductionDb.load());
-    const auto amount = liveReduction / 12.0f;
-    const auto bar = area.withRight(area.getRight() - 90.0f)
-                         .withY(area.getCentreY() - 3.0f)
-                         .withHeight(6.0f);
-
-    graphics.setColour(juce::Colour(0xff30353b));
-    graphics.fillRoundedRectangle(bar, 4.0f);
-    graphics.setColour(juce::Colour(0xfff07878));
-    graphics.fillRoundedRectangle(bar.withLeft(bar.getRight() - bar.getWidth() * amount), 4.0f);
 }
 
 void LUmacOSvelerAudioProcessorEditor::paint(juce::Graphics& graphics)
 {
     graphics.fillAll(juce::Colour(0xff17191d));
     graphics.setColour(juce::Colour(0xff24282e));
-    graphics.setColour(juce::Colours::white);
-    graphics.setFont(juce::FontOptions(18.0f, juce::Font::bold));
-    graphics.drawText("LUmacOSveler", 250, 24, getWidth() - 482, 26, juce::Justification::centred);
+    if (auto titleGraphic = createTitleGraphic())
+        titleGraphic->drawWithin(graphics, { 34.0f, 16.0f, 220.0f, 40.0f },
+                         juce::RectanglePlacement::centred, 1.0f);
 }
 
 void LUmacOSvelerAudioProcessorEditor::resized()
@@ -274,16 +271,18 @@ void LUmacOSvelerAudioProcessorEditor::resized()
     freezeLevelSlider.setBounds(sliderX, 206, sliderWidth, rowHeight);
     truePeakLabel.setBounds(content.getX(), 262, labelWidth - 10, 26);
     truePeakSlider.setBounds(sliderX, 254, sliderWidth, rowHeight);
-    correctionHighLabel.setBounds(content.getX(), 310, labelWidth - 10, 26);
-    correctionHighSlider.setBounds(sliderX, 302, sliderWidth, rowHeight);
-    correctionLowLabel.setBounds(content.getX(), 358, labelWidth - 10, 26);
-    correctionLowSlider.setBounds(sliderX, 350, sliderWidth, rowHeight);
-    correctionMixModeLabel.setBounds(content.getX(), 406, labelWidth - 10, 26);
-    correctionMixModeBox.setBounds(sliderX, 398, sliderWidth, rowHeight);
-    resetButton.setBounds(content.getX(), 24, 70, 28);
-    inputLearnButton.setBounds(content.getX() + 82, 24, 110, 28);
+    lfeGainLabel.setBounds(content.getX(), 310, labelWidth - 10, 26);
+    lfeGainSlider.setBounds(sliderX, 302, sliderWidth, rowHeight);
+    correctionHighLabel.setBounds(content.getX(), 358, labelWidth - 10, 26);
+    correctionHighSlider.setBounds(sliderX, 350, sliderWidth, rowHeight);
+    correctionLowLabel.setBounds(content.getX(), 406, labelWidth - 10, 26);
+    correctionLowSlider.setBounds(sliderX, 398, sliderWidth, rowHeight);
+    correctionMixModeLabel.setBounds(content.getX(), 454, labelWidth - 10, 26);
+    correctionMixModeBox.setBounds(sliderX, 446, sliderWidth, rowHeight);
+    inputLearnButton.setBounds(content.getRight() - 270, 24, 110, 28);
+    resetButton.setBounds(content.getRight() - 150, 24, 70, 28);
     infoButton.setBounds(content.getRight() - 70, 24, 70, 28);
-    limiterLabel.setBounds(content.getX(), 454, labelWidth - 10, 30);
-    limiterReductionMeter.setBounds(sliderX, 454, sliderWidth, 30);
-    limiterReductionLabel.setBounds(content.getRight() - 90, 454, 90, 30);
+    const auto isFiveOne = audioProcessor.getTotalNumInputChannels() == 6;
+    lfeGainLabel.setVisible(isFiveOne);
+    lfeGainSlider.setVisible(isFiveOne);
 }

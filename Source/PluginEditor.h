@@ -12,7 +12,7 @@ public:
     void resized() override;
 
 private:
-    class RightAlignedSliderLookAndFeel final : public juce::LookAndFeel_V4
+    class RightAlignedSliderLookAndFeel : public juce::LookAndFeel_V4
     {
     public:
         juce::Label* createSliderTextBox(juce::Slider& slider) override
@@ -21,25 +21,6 @@ private:
             label->setJustificationType(juce::Justification::centredRight);
             return label;
         }
-    };
-
-    class LimiterReductionMeter final : public juce::Component, private juce::Timer
-    {
-    public:
-        LimiterReductionMeter(const std::atomic<float>& reduction, juce::Label& reductionLabel)
-            : reductionDb(reduction), reductionValueLabel(reductionLabel)
-        {
-            startTimerHz(30);
-        }
-
-        void paint(juce::Graphics& graphics) override;
-
-    private:
-        void timerCallback() override;
-        const std::atomic<float>& reductionDb;
-        juce::Label& reductionValueLabel;
-        float heldReductionDb = 0.0f;
-        double lastPeakTimeMs = 0.0;
     };
 
     LUmacOSvelerAudioProcessor& audioProcessor;
@@ -53,6 +34,9 @@ private:
     juce::Label truePeakLabel;
     juce::Slider truePeakSlider;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> truePeakAttachment;
+    juce::Label lfeGainLabel;
+    juce::Slider lfeGainSlider;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> lfeGainAttachment;
     juce::Label freezeLevelLabel;
     juce::Slider freezeLevelSlider;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> freezeLevelAttachment;
@@ -71,9 +55,6 @@ private:
     juce::TextButton resetButton { "RESET" };
     juce::TextButton inputLearnButton { "LEARN INPUT" };
     juce::TextButton infoButton { "INFO" };
-    juce::Label limiterLabel;
-    juce::Label limiterReductionLabel;
-    LimiterReductionMeter limiterReductionMeter;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(LUmacOSvelerAudioProcessorEditor)
 };

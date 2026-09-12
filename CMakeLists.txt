@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.22)
 
-project(LUmacOSveler VERSION 0.1.0 LANGUAGES C CXX)
+project(LUmacOSveler VERSION 0.6.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -25,6 +25,11 @@ FetchContent_Declare(
     GIT_SHALLOW TRUE
 )
 FetchContent_MakeAvailable(JUCE)
+
+juce_add_binary_data(LUmacOSvelerIconData
+    NAMESPACE LUmacOSvelerIconData
+    SOURCES Resources/LUmacOSvelerTitle.png
+)
 
 juce_add_plugin(LUmacOSveler
     COMPANY_NAME "LUmacOSveler"
@@ -57,6 +62,7 @@ target_compile_definitions(LUmacOSveler PRIVATE
 )
 
 target_link_libraries(LUmacOSveler PRIVATE
+    LUmacOSvelerIconData
     juce::juce_audio_utils
     juce::juce_dsp
     juce::juce_recommended_config_flags

@@ -1,18 +1,17 @@
-# LUmacOSveler
+# LUmacOSveler 0.6.0
 
-<img width="733" height="486" alt="Screenshot 2026-09-05 at 22 00 32" src="https://github.com/user-attachments/assets/50f98872-e20c-4616-a99e-fa5622842038" />
-
-LUmacOSveler is a JUCE/CMake VST3 loudness normalisation plugin for macOS.
+LUmacOSveler is a JUCE/CMake VST3/AU loudness normalisation plugin for macOS.
 Its interface is designed around a compact loudness-control workflow, with
 Target Level, source loudness reference, dynamic correction, true-peak control,
-and a fixed final limiter.
+and a final hard clipper.
 
 ## Features
 
-- K-weighted loudness analysis based on the ITU-R BS.1770 model.
+- K-weighted loudness analysis based on ITU-R BS.1770-5.
 - 400 ms momentary and 3 second short-term loudness windows.
 - 400 ms integrated-gating blocks with a 100 ms hop.
 - Fixed BS.1770/R128 gate values: -70 LUFS absolute and -10 LU relative.
+- The `RESET` control restores all defaults and clears the programme loudness history.
 - Target Level loudness matching.
 - Input Level reference for known or previously measured source loudness.
 - Learn Input mode for capturing gated integrated loudness from the input.
@@ -20,20 +19,19 @@ and a fixed final limiter.
 - Four correction mix curves: linear/linear, linear/log, log/linear, log/log.
 - Max Gain protection for the total loudness compensation.
 - Freeze Level protection against isolated peaks raising the background.
-- 4x oversampled True Peak protection with a 0.2 dB internal safety margin.
-- Fixed linked-channel final limiter.
-- Resizable editor with live gain-reduction meter and one-second peak hold.
+- 4x oversampled hard clipping at the selected True Peak ceiling.
+- Mono, stereo and 5.1 layouts with BS.1770 channel weights and LFE exclusion.
+- Resizable editor without a limiter meter.
 - Sample-rate support from 8 kHz to 192 kHz.
 
 ## Default Parameters
 
 | Parameter | Default |
 | --- | ---: |
-| Target Level | -20 LUFS |
+| Target Level | -23 LUFS |
 | Max Gain | +12 dB |
-| True Peak | -1 dBTP |
 | Freeze Level | -30 LUFS |
-| Input Level | -20 LUFS |
+| Input Level | -23 LUFS |
 | Correction High | 100% |
 | Correction Low | 100% |
 | Correction Mix Mode | Linear / Linear |
@@ -81,19 +79,16 @@ K-weighted loudness analysis
 -> Max Gain limit
 -> Freeze Level increase protection
 -> Gain application
--> 4x True Peak protection
--> Fixed final limiter
+-> 4x oversampled hard clipper
 -> Output
 ```
 
-The fixed final limiter uses:
+The final clipper uses:
 
 ```text
-Threshold: 0 dB
-Output: 0 dB
-Lookahead: 0.1 ms
-Knee: 0.1 dB
-Release: 0.1 ms
+Ceiling: selected True Peak value
+Oversampling: 4x
+Lookahead: none
 ```
 
 ## Build
